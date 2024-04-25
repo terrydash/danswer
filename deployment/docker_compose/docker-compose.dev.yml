@@ -67,7 +67,7 @@ services:
       - ASYM_QUERY_PREFIX=${ASYM_QUERY_PREFIX:-}
       - ENABLE_RERANKING_REAL_TIME_FLOW=${ENABLE_RERANKING_REAL_TIME_FLOW:-}
       - ENABLE_RERANKING_ASYNC_FLOW=${ENABLE_RERANKING_ASYNC_FLOW:-}
-      - MODEL_SERVER_HOST=${MODEL_SERVER_HOST:-}
+      - MODEL_SERVER_HOST=${MODEL_SERVER_HOST:-inference_model_server}
       - MODEL_SERVER_PORT=${MODEL_SERVER_PORT:-}
       # Leave this on pretty please? Nothing sensitive is collected!
       # https://docs.danswer.dev/more/telemetry
@@ -80,9 +80,6 @@ services:
     volumes:
       - local_dynamic_storage:/home/storage
       - file_connector_tmp_storage:/home/file_connector_storage
-      - model_cache_torch:/root/.cache/torch/
-      - model_cache_nltk:/root/nltk_data/
-      - model_cache_huggingface:/root/.cache/huggingface/
     extra_hosts:
       - "host.docker.internal:host-gateway"
     logging:
@@ -90,6 +87,8 @@ services:
       options:
         max-size: "50m"
         max-file: "6"
+
+
   background:
     image: danswer/danswer-backend:latest
     build:
@@ -137,17 +136,19 @@ services:
       - NORMALIZE_EMBEDDINGS=${NORMALIZE_EMBEDDINGS:-}
       - ASYM_QUERY_PREFIX=${ASYM_QUERY_PREFIX:-}  # Needed by DanswerBot
       - ASYM_PASSAGE_PREFIX=${ASYM_PASSAGE_PREFIX:-}
-      - MODEL_SERVER_HOST=${MODEL_SERVER_HOST:-}
+      - MODEL_SERVER_HOST=${MODEL_SERVER_HOST:-inference_model_server}
       - MODEL_SERVER_PORT=${MODEL_SERVER_PORT:-}
-      - INDEXING_MODEL_SERVER_HOST=${INDEXING_MODEL_SERVER_HOST:-}
-      - MIN_THREADS_ML_MODELS=${MIN_THREADS_ML_MODELS:-}
+      - INDEXING_MODEL_SERVER_HOST=${INDEXING_MODEL_SERVER_HOST:-indexing_model_server}
       # Indexing Configs
       - NUM_INDEXING_WORKERS=${NUM_INDEXING_WORKERS:-}
+      - DISABLED_CONNECTOR_TYPES=${DISABLED_CONNECTOR_TYPES:-}
       - DISABLE_INDEX_UPDATE_ON_SWAP=${DISABLE_INDEX_UPDATE_ON_SWAP:-}
       - DASK_JOB_CLIENT_ENABLED=${DASK_JOB_CLIENT_ENABLED:-}
       - CONTINUE_ON_CONNECTOR_FAILURE=${CONTINUE_ON_CONNECTOR_FAILURE:-}
       - EXPERIMENTAL_CHECKPOINTING_ENABLED=${EXPERIMENTAL_CHECKPOINTING_ENABLED:-}
       - CONFLUENCE_CONNECTOR_LABELS_TO_SKIP=${CONFLUENCE_CONNECTOR_LABELS_TO_SKIP:-}
+      - JIRA_CONNECTOR_LABELS_TO_SKIP=${JIRA_CONNECTOR_LABELS_TO_SKIP:-}
+      - WEB_CONNECTOR_VALIDATE_URLS=${WEB_CONNECTOR_VALIDATE_URLS:-}
       - JIRA_API_VERSION=${JIRA_API_VERSION:-}
       - GONG_CONNECTOR_START_TIME=${GONG_CONNECTOR_START_TIME:-}
       - NOTION_CONNECTOR_ENABLE_RECURSIVE_PAGE_LOOKUP=${NOTION_CONNECTOR_ENABLE_RECURSIVE_PAGE_LOOKUP:-}
@@ -174,9 +175,6 @@ services:
     volumes:
       - local_dynamic_storage:/home/storage
       - file_connector_tmp_storage:/home/file_connector_storage
-      - model_cache_torch:/root/.cache/torch/
-      - model_cache_nltk:/root/nltk_data/
-      - model_cache_huggingface:/root/.cache/huggingface/
     extra_hosts:
       - "host.docker.internal:host-gateway"
     logging:
@@ -184,6 +182,8 @@ services:
       options:
         max-size: "50m"
         max-file: "6"
+
+
   web_server:
     image: danswer/danswer-web-server:latest
     build:
@@ -198,6 +198,61 @@ services:
     environment:
       - INTERNAL_URL=http://api_server:8080
       - WEB_DOMAIN=${WEB_DOMAIN:-}
+
+
+  inference_model_server:
+    image: danswer/danswer-model-server:latest
+    build:
+      context: ../../backend
+      dockerfile: Dockerfile.model_server
+    command: >
+      /bin/sh -c "if [ \"${DISABLE_MODEL_SERVER:-false}\" = \"True\" ]; then
+        echo 'Skipping service...';
+        exit 0;
+      else
+        exec uvicorn model_server.main:app --host 0.0.0.0 --port 9000;
+      fi"
+    restart: on-failure
+    environment:
+      - MIN_THREADS_ML_MODELS=${MIN_THREADS_ML_MODELS:-}
+      # Set to debug to get more fine-grained logs
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    volumes:
+      - model_cache_huggingface:/root/.cache/huggingface/
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "6"
+
+
+  indexing_model_server:
+    image: danswer/danswer-model-server:latest
+    build:
+      context: ../../backend
+      dockerfile: Dockerfile.model_server
+    command: >
+      /bin/sh -c "if [ \"${DISABLE_MODEL_SERVER:-false}\" = \"True\" ]; then
+        echo 'Skipping service...';
+        exit 0;
+      else
+        exec uvicorn model_server.main:app --host 0.0.0.0 --port 9000;
+      fi"
+    restart: on-failure
+    environment:
+      - MIN_THREADS_ML_MODELS=${MIN_THREADS_ML_MODELS:-}
+      - INDEXING_ONLY=True
+      # Set to debug to get more fine-grained logs
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    volumes:
+      - model_cache_huggingface:/root/.cache/huggingface/
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "6"
+
+
   relational_db:
     image: postgres:15.2-alpine
     restart: always
@@ -208,6 +263,8 @@ services:
       - "5432:5432"
     volumes:
       - db_volume:/var/lib/postgresql/data
+
+
   # This container name cannot have an underscore in it due to Vespa expectations of the URL
   index:
     image: vespaengine/vespa:8.277.17
@@ -222,6 +279,8 @@ services:
       options:
         max-size: "50m"
         max-file: "6"
+
+
   nginx:
     image: nginx:1.23.4-alpine
     restart: always
@@ -250,37 +309,15 @@ services:
     command: > 
       /bin/sh -c "dos2unix /etc/nginx/conf.d/run-nginx.sh 
       && /etc/nginx/conf.d/run-nginx.sh app.conf.template.dev"
-  # Run with --profile model-server to bring up the danswer-model-server container
-  # Be sure to change MODEL_SERVER_HOST (see above) as well
-  # ie. MODEL_SERVER_HOST="model_server" docker compose -f docker-compose.dev.yml -p danswer-stack --profile model-server up -d --build
-  model_server:
-    image: danswer/danswer-model-server:latest
-    build:
-      context: ../../backend
-      dockerfile: Dockerfile.model_server
-    profiles:
-      - "model-server"
-    command: uvicorn model_server.main:app --host 0.0.0.0 --port 9000
-    restart: always
-    environment:
-      - DOCUMENT_ENCODER_MODEL=${DOCUMENT_ENCODER_MODEL:-}
-      - NORMALIZE_EMBEDDINGS=${NORMALIZE_EMBEDDINGS:-}
-      - MIN_THREADS_ML_MODELS=${MIN_THREADS_ML_MODELS:-}
-      # Set to debug to get more fine-grained logs
-      - LOG_LEVEL=${LOG_LEVEL:-info}
-    volumes:
-      - model_cache_torch:/root/.cache/torch/
-      - model_cache_huggingface:/root/.cache/huggingface/
-    logging:
-      driver: json-file
-      options:
-        max-size: "50m"
-        max-file: "6"
+        
+
 volumes:
+  # local_dynamic_storage is legacy only now
   local_dynamic_storage:
-  file_connector_tmp_storage:  # used to store files uploaded by the user temporarily while we are indexing them
+  # used to store files uploaded by the user temporarily while we are indexing them
+  # file_connector_tmp_storage is legacy only now
+  file_connector_tmp_storage:
   db_volume:
   vespa_volume:
-  model_cache_torch:
-  model_cache_nltk:
+  # Created by the container itself
   model_cache_huggingface:
