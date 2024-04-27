@@ -1,5 +1,5 @@
 FROM node:20-alpine AS base
-
+ENV NODE_TLS_REJECT_UNAUTHORIZED 0
 LABEL com.danswer.maintainer="founders@danswer.ai"
 LABEL com.danswer.description="This image is for the frontend/webserver of Danswer. It is MIT \
 Licensed and free for all to use. You can find it at \
@@ -13,6 +13,7 @@ RUN echo "DANSWER_VERSION: ${DANSWER_VERSION}"
 
 # Step 1. Install dependencies only when needed
 FROM base AS deps
+ENV NODE_TLS_REJECT_UNAUTHORIZED 0
 # Check https://github.com/nodejs/docker-node/tree/b4117f9333da4138b03a546ec926ef50a31506c3#nodealpine to understand why libc6-compat might be needed.
 RUN apk add --no-cache libc6-compat
 WORKDIR /app
@@ -48,6 +49,7 @@ RUN npm run build
 
 # Step 3. Production image, copy all the files and run next
 FROM base AS runner
+ENV NODE_TLS_REJECT_UNAUTHORIZED 0
 WORKDIR /app
 
 # Remove global node modules, since they are not needed by the actual app
