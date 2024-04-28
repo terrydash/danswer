@@ -8,8 +8,8 @@ from typing import Optional
 from typing import TypedDict
 from uuid import UUID
 
-from fastapi_users.db import SQLAlchemyBaseOAuthAccountTableUUID
-from fastapi_users.db import SQLAlchemyBaseUserTableUUID
+from fastapi_users_db_sqlalchemy import SQLAlchemyBaseOAuthAccountTableUUID
+from fastapi_users_db_sqlalchemy import SQLAlchemyBaseUserTableUUID
 from fastapi_users_db_sqlalchemy.access_token import SQLAlchemyBaseAccessTokenTableUUID
 from sqlalchemy import Boolean
 from sqlalchemy import DateTime
@@ -34,6 +34,7 @@ from danswer.configs.constants import DEFAULT_BOOST
 from danswer.configs.constants import DocumentSource
 from danswer.configs.constants import MessageType
 from danswer.configs.constants import SearchFeedbackType
+from danswer.configs.constants import TokenRateLimitScope
 from danswer.connectors.models import InputType
 from danswer.db.enums import ChatSessionSharedStatus
 from danswer.db.enums import IndexingStatus
@@ -694,6 +695,33 @@ Structures, Organizational, Configurations Tables
 """
 
 
+class LLMProvider(Base):
+    __tablename__ = "llm_provider"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String, unique=True)
+    api_key: Mapped[str | None] = mapped_column(String, nullable=True)
+    api_base: Mapped[str | None] = mapped_column(String, nullable=True)
+    api_version: Mapped[str | None] = mapped_column(String, nullable=True)
+    # custom configs that should be passed to the LLM provider at inference time
+    # (e.g. `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, etc. for bedrock)
+    custom_config: Mapped[dict[str, str] | None] = mapped_column(
+        postgresql.JSONB(), nullable=True
+    )
+    default_model_name: Mapped[str] = mapped_column(String)
+    fast_default_model_name: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    # The LLMs that are available for this provider. Only required if not a default provider.
+    # If a default provider, then the LLM options are pulled from the `options.py` file.
+    # If needed, can be pulled out as a separate table in the future.
+    model_names: Mapped[list[str] | None] = mapped_column(
+        postgresql.ARRAY(String), nullable=True
+    )
+
+    # should only be set for a single provider
+    is_default_provider: Mapped[bool | None] = mapped_column(Boolean, unique=True)
+
+
 class DocumentSet(Base):
     __tablename__ = "document_set"
 
@@ -791,6 +819,9 @@ class Persona(Base):
     # globablly via env variables. For flexibility, validity is not currently enforced
     # NOTE: only is applied on the actual response generation - is not used for things like
     # auto-detected time filters, relevance filters, etc.
+    llm_model_provider_override: Mapped[str | None] = mapped_column(
+        String, nullable=True
+    )
     llm_model_version_override: Mapped[str | None] = mapped_column(
         String, nullable=True
     )
@@ -1038,6 +1069,37 @@ class UserGroup(Base):
         "DocumentSet",
         secondary=DocumentSet__UserGroup.__table__,
         viewonly=True,
+    )
+
+
+"""Tables related to Token Rate Limiting
+NOTE: `TokenRateLimit` is partially an MIT feature (global rate limit)
+"""
+
+
+class TokenRateLimit(Base):
+    __tablename__ = "token_rate_limit"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    token_budget: Mapped[int] = mapped_column(Integer, nullable=False)
+    period_hours: Mapped[int] = mapped_column(Integer, nullable=False)
+    scope: Mapped[TokenRateLimitScope] = mapped_column(
+        Enum(TokenRateLimitScope, native_enum=False)
+    )
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class TokenRateLimit__UserGroup(Base):
+    __tablename__ = "token_rate_limit__user_group"
+
+    rate_limit_id: Mapped[int] = mapped_column(
+        ForeignKey("token_rate_limit.id"), primary_key=True
+    )
+    user_group_id: Mapped[int] = mapped_column(
+        ForeignKey("user_group.id"), primary_key=True
     )
 
 
