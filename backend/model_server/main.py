@@ -20,10 +20,12 @@ from shared_configs.configs import INDEXING_ONLY
 from shared_configs.configs import MIN_THREADS_ML_MODELS
 from shared_configs.configs import MODEL_SERVER_ALLOWED_HOST
 from shared_configs.configs import MODEL_SERVER_PORT
-
+import langsmith
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
-
+os.environ["LANGCHAIN_ENDPOINT"]="http://host.docker.internal:32604/api"
+os.environ["LANGCHAIN_HUB_API_UR"]="http://lhost.docker.internal/api-hub"
+os.environ["LANGCHAIN_TRACING_V2"] ="true"
 transformer_logging.set_verbosity_error()
 
 logger = setup_logger()

@@ -1,3 +1,4 @@
+import os
 import time
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -14,6 +15,11 @@ from fastapi.responses import JSONResponse
 from httpx_oauth.clients.google import GoogleOAuth2
 from sqlalchemy.orm import Session
 
+import langsmith
+
+os.environ["LANGCHAIN_ENDPOINT"]="http://host.docker.internal:32604/api"
+os.environ["LANGCHAIN_HUB_API_UR"]="http://lhost.docker.internal/api-hub"
+os.environ["LANGCHAIN_TRACING_V2"] ="true"
 from danswer import __version__
 from danswer.auth.schemas import UserCreate
 from danswer.auth.schemas import UserRead
